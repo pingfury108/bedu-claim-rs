@@ -1,6 +1,6 @@
 # 百度教育自动认领工具 (bedu-claim-rs)
 
-基于 Rust 实现的百度教育任务自动认领 CLI 工具，移植自 Go 版本代码。
+基于 Rust 实现的百度教育任务自动认领 CLI 工具和库，移植自 Go 版本代码。
 
 ## 功能特性
 
@@ -10,15 +10,153 @@
 - 🔄 自动轮询机制
 - 🛡️ 用户身份验证
 - 📝 详细的日志记录
+- 📚 模块化设计，可作为库使用
 
-## 安装
+## 项目结构
 
-确保已安装 Rust 开发环境，然后克隆并编译：
+```
+src/
+├── api/           # API 数据结构定义
+│   ├── mod.rs
+│   └── types.rs
+├── client/        # 客户端和认领逻辑
+│   ├── mod.rs
+│   ├── http.rs    # HTTP 客户端
+│   └── claimer.rs # 自动认领器
+├── lib.rs         # 库入口
+└── main.rs        # CLI 程序入口
+```
+
+## 安装和使用
+
+### 作为 CLI 工具使用
 
 ```bash
+# 克隆项目
 git clone <repository-url>
 cd bedu-claim-rs
+
+# 编译
 cargo build --release
+
+# 运行
+cargo run -- --cookie "your_cookie_string"
+```
+
+### 作为库使用
+
+在你的 `Cargo.toml` 中添加依赖：
+
+```toml
+[dependencies]
+bedu-claim = { path = "path/to/bedu-claim-rs" }
+# 或从 git 安装
+# bedu-claim = { git = "https://github.com/your-repo/bedu-claim-rs" }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+```
+
+### 库使用示例
+
+#### 1. 基本自动认领
+
+```rust
+use bedu_claim::client::{AutoClaimer, AutoClaimConfig};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = AutoClaimConfig {
+        server_base_url: "https://easylearn.baidu.com".to_string(),
+        cookie: "your_cookie_here".to_string(),
+        task_type: "audittask".to_string(),
+        claim_limit: 10,
+        interval: 3.0,
+        step_id: 1,
+        subject_id: 2,
+        clue_type_id: 1,
+    };
+
+    let claimer = AutoClaimer::new(config);
+    claimer.start().await?;
+
+    Ok(())
+}
+```
+
+#### 2. 单独使用 HTTP 客户端
+
+```rust
+use bedu_claim::client::HttpClient;
+use std::collections::HashMap;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = HttpClient::new(
+        "https://easylearn.baidu.com".to_string(),
+        "your_cookie_here".to_string()
+    );
+
+    // 获取用户信息
+    let user_info = client.get_user_info().await?;
+    println!("用户名: {}", user_info.data.user_name);
+
+    // 获取任务列表
+    let mut options = HashMap::new();
+    options.insert("taskType".to_string(), json!("audittask"));
+    options.insert("subject".to_string(), json!(2));
+
+    let tasks = client.get_audit_task_list(&options).await?;
+    println!("任务数量: {}", tasks.data.list.len());
+
+    // 认领任务
+    if !tasks.data.list.is_empty() {
+        let task_ids = vec![tasks.data.list[0].task_id.to_string()];
+        let result = client.claim_audit_task(task_ids, "audittask").await?;
+        println!("认领结果: {}", result.errmsg);
+    }
+
+    Ok(())
+}
+```
+
+#### 3. 手动控制认领过程
+
+```rust
+use bedu_claim::client::{AutoClaimer, AutoClaimConfig};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = AutoClaimConfig {
+        server_base_url: "https://easylearn.baidu.com".to_string(),
+        cookie: "your_cookie_here".to_string(),
+        task_type: "producetask".to_string(),
+        claim_limit: 5,
+        interval: 2.0,
+        step_id: 2,
+        subject_id: 3,
+        clue_type_id: 1,
+    };
+
+    let claimer = AutoClaimer::new(config);
+
+    // 验证用户
+    let user_name = claimer.validate_user().await?;
+    println!("用户验证成功: {}", user_name);
+
+    // 手动执行认领
+    for i in 1..=3 {
+        let claimed = claimer.perform_single_claim().await?;
+        println!("第 {} 次认领了 {} 个任务", i, claimed);
+
+        if claimed == 0 {
+            println!("没有更多任务");
+            break;
+        }
+    }
+
+    Ok(())
+}
 ```
 
 ## 使用方法
@@ -73,11 +211,11 @@ cargo run -- \
   --interval 2.0
 ```
 
-### 3. 高频轮询模式
+### 3. 高频轮询模式（1毫秒间隔）
 ```bash
 cargo run -- \
   --cookie "your_cookie_here" \
-  --interval 0.5 \
+  --interval 0.001 \
   --limit 50
 ```
 
